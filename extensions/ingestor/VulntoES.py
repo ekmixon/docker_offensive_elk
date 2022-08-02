@@ -31,12 +31,10 @@ class NmapES:
 	def toES(self):
 		"Returns a list of dictionaries (only for open ports) for each host in the report"
 		for h in self.root.iter('host'):
-			dict_item = {}
-			dict_item['scanner'] = 'nmap'
-			if h.tag == 'host':
-				if 'endtime' in h.attrib and h.attrib['endtime']:
-					dict_item['time'] = time.strftime('%Y/%m/%d %H:%M:%S', time.gmtime(float(h.attrib['endtime'])))
-			
+			dict_item = {'scanner': 'nmap'}
+			if h.tag == 'host' and 'endtime' in h.attrib and h.attrib['endtime']:
+				dict_item['time'] = time.strftime('%Y/%m/%d %H:%M:%S', time.gmtime(float(h.attrib['endtime'])))
+
 			for c in h:
 				if c.tag == 'address':
 					if c.attrib['addr'] and c.attrib['addrtype'] == 'ipv4':
@@ -54,21 +52,27 @@ class NmapES:
 
 				elif c.tag == 'ports':
 					for port in list(c):
-						dict_item_ports = {}
 						if port.tag == 'port':
-							# print(port.tag, port.attrib)
-							dict_item_ports['port'] = port.attrib['portid']
-							dict_item_ports['protocol'] = port.attrib['protocol']
+							dict_item_ports = {
+								'port': port.attrib['portid'],
+								'protocol': port.attrib['protocol'],
+							}
+
 							for p in list(port):
-								if p.tag == 'state':
-									dict_item_ports['state'] = p.attrib['state']
+								if p.tag == 'script':
+									if p.attrib['id'] and p.attrib['output']:
+										if 'scripts' not in dict_item_ports:
+											dict_item_ports['scripts'] = {}
+										dict_item_ports['scripts'][p.attrib['id']] = p.attrib['output']
 								elif p.tag == 'service':
 									for cpe in list(p):
 										if cpe.tag == 'cpe':
-											if 'cpe' in dict_item_ports:
-												dict_item_ports['cpe'] = dict_item_ports['cpe']+[cpe.text]
-											else:
-												dict_item_ports['cpe'] = [cpe.text]
+											dict_item_ports['cpe'] = (
+												dict_item_ports['cpe'] + [cpe.text]
+												if 'cpe' in dict_item_ports
+												else [cpe.text]
+											)
+
 									dict_item_ports['service'] = p.attrib['name']
 									if 'product' in p.attrib and p.attrib['product']:
 										dict_item_ports['product_name'] = p.attrib['product']
@@ -76,16 +80,9 @@ class NmapES:
 											dict_item_ports['product_version'] = p.attrib['version']
 									if 'banner' in p.attrib and p.attrib['banner']:
 										dict_item_ports['banner'] = p.attrib['banner']
-								elif p.tag == 'script':
-									if p.attrib['id']:
-										if p.attrib['output']:
-											if 'scripts' in dict_item_ports:
-												dict_item_ports['scripts'][p.attrib['id']] = p.attrib['output']
-											else:
-												dict_item_ports['scripts'] = dict()
-												dict_item_ports['scripts'][p.attrib['id']] = p.attrib['output']
-													
-							to_upload = merge_two_dicts(dict_item, dict_item_ports)	
+								elif p.tag == 'state':
+									dict_item_ports['state'] = p.attrib['state']
+							to_upload = merge_two_dicts(dict_item, dict_item_ports)
 							if to_upload['state'] == 'open':
 								self.es.index(index=self.index_name, body=json.dumps(to_upload))
 
@@ -103,16 +100,16 @@ def main():
 	try:
 		opts, extraparams = getopt.getopt(sys.argv[1:], letters, keywords)
 	except getopt.GetoptError as err:
-		print(str(err))
+		print(err)
 		usage()
 		sys.exit()
-	
+
 	in_file = ''
 	es_ip = ''
 	es_port = 9200
 	report_type = ''
 	index_name = ''
-	static_fields = dict()
+	static_fields = {}
 
 	for o,p in opts:
 		if o in ['-i','--input-file=']:
